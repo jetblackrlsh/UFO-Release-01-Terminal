@@ -1,0 +1,534 @@
+const payload = window.UFO_RELEASE_DATA;
+const records = payload.records.map((record) => ({
+  ...record,
+  searchable: normalize(
+    [
+      record.descriptiveTitle,
+      record.descriptiveFilename,
+      record.originalTitle,
+      record.previewText,
+      record.agency,
+      record.releaseDate,
+      record.incidentDate,
+      record.incidentLocation,
+      record.fileType,
+      record.tags.join(" "),
+    ].join(" ")
+  ),
+}));
+
+const state = {
+  query: "",
+  agencies: new Set(),
+  fileTypes: new Set(),
+  releaseDate: "",
+  incidentDate: "",
+  location: "",
+  sort: "signal",
+  view: "list",
+};
+
+const els = {
+  totalFiles: document.querySelector("#totalFiles"),
+  imageFiles: document.querySelector("#imageFiles"),
+  videoFiles: document.querySelector("#videoFiles"),
+  visibleFiles: document.querySelector("#visibleFiles"),
+  activeFilters: document.querySelector("#activeFilters"),
+  searchInput: document.querySelector("#searchInput"),
+  agencyFilters: document.querySelector("#agencyFilters"),
+  typeFilters: document.querySelector("#typeFilters"),
+  releaseDateFilter: document.querySelector("#releaseDateFilter"),
+  incidentDateFilter: document.querySelector("#incidentDateFilter"),
+  locationFilter: document.querySelector("#locationFilter"),
+  sortSelect: document.querySelector("#sortSelect"),
+  clearFilters: document.querySelector("#clearFilters"),
+  listViewButton: document.querySelector("#listViewButton"),
+  galleryViewButton: document.querySelector("#galleryViewButton"),
+  videoViewButton: document.querySelector("#videoViewButton"),
+  resultStatus: document.querySelector("#resultStatus"),
+  filterReadout: document.querySelector("#filterReadout"),
+  resultsList: document.querySelector("#resultsList"),
+  imageGallery: document.querySelector("#imageGallery"),
+  videoGallery: document.querySelector("#videoGallery"),
+  emptyState: document.querySelector("#emptyState"),
+};
+
+const imageCount = records.filter((record) => record.fileType === "IMG").length;
+const videoCount = records.filter((record) => record.fileType === "VID").length;
+
+function normalize(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function displayValue(value) {
+  return value && value.trim() ? value : "Unknown";
+}
+
+function countBy(field) {
+  return records.reduce((counts, record) => {
+    const value = displayValue(record[field]);
+    counts.set(value, (counts.get(value) || 0) + 1);
+    return counts;
+  }, new Map());
+}
+
+function sortFacetEntries(entries) {
+  return [...entries].sort(([a], [b]) => {
+    const special = new Set(["N/A", "Unknown"]);
+    if (special.has(a) && !special.has(b)) return 1;
+    if (!special.has(a) && special.has(b)) return -1;
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+  });
+}
+
+function buildCheckboxes(container, field, selectedSet) {
+  container.replaceChildren();
+  for (const [value, count] of sortFacetEntries(countBy(field))) {
+    const id = `${field}-${value}`.replace(/[^a-z0-9]+/gi, "-");
+    const label = document.createElement("label");
+    label.className = "filter-check";
+    label.htmlFor = id;
+    label.innerHTML = `
+      <input id="${id}" type="checkbox" value="${escapeAttr(value)}" />
+      <span>${escapeHtml(value)}</span>
+      <span class="count">${count}</span>
+    `;
+    const input = label.querySelector("input");
+    input.addEventListener("change", () => {
+      if (input.checked) {
+        selectedSet.add(value);
+      } else {
+        selectedSet.delete(value);
+      }
+      render();
+    });
+    container.append(label);
+  }
+}
+
+function buildSelect(select, field, allLabel) {
+  const values = sortFacetEntries(countBy(field)).map(([value]) => value);
+  select.replaceChildren(new Option(allLabel, ""));
+  for (const value of values) {
+    select.add(new Option(value, value));
+  }
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value).replace(/`/g, "&#096;");
+}
+
+function highlight(text) {
+  const value = escapeHtml(text);
+  const terms = normalize(state.query)
+    .split(" ")
+    .filter((term) => term.length > 2)
+    .slice(0, 6);
+  if (!terms.length) return value;
+
+  const pattern = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi");
+  return value.replace(pattern, "<mark>$1</mark>");
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function activeFilterCount() {
+  let count = 0;
+  if (state.query) count += 1;
+  count += state.agencies.size;
+  count += state.fileTypes.size;
+  if (state.releaseDate) count += 1;
+  if (state.incidentDate) count += 1;
+  if (state.location) count += 1;
+  return count;
+}
+
+function getFilteredRecords() {
+  const terms = normalize(state.query).split(" ").filter(Boolean);
+  return records
+    .filter((record) => {
+      if (state.agencies.size && !state.agencies.has(record.agency)) return false;
+      if (state.fileTypes.size && !state.fileTypes.has(record.fileType)) return false;
+      if (state.releaseDate && record.releaseDate !== state.releaseDate) return false;
+      if (state.incidentDate && record.incidentDate !== state.incidentDate) return false;
+      if (state.location && record.incidentLocation !== state.location) return false;
+      return terms.every((term) => record.searchable.includes(term));
+    })
+    .sort(compareRecords);
+}
+
+function getVisibleRecords() {
+  const filtered = getFilteredRecords();
+  if (state.view === "gallery") {
+    return filtered.filter((record) => record.fileType === "IMG");
+  }
+  if (state.view === "video") {
+    return filtered.filter((record) => record.fileType === "VID");
+  }
+  return filtered;
+}
+
+function compareRecords(a, b) {
+  switch (state.sort) {
+    case "agency":
+      return compareText(a.agency, b.agency) || compareText(a.descriptiveTitle, b.descriptiveTitle);
+    case "location":
+      return compareText(a.incidentLocation, b.incidentLocation) || b.signalScore - a.signalScore;
+    case "incidentDate":
+      return compareText(a.incidentDate, b.incidentDate) || b.signalScore - a.signalScore;
+    case "title":
+      return compareText(a.descriptiveFilename, b.descriptiveFilename);
+    case "type":
+      return compareText(a.fileType, b.fileType) || b.signalScore - a.signalScore;
+    case "signal":
+    default:
+      return b.signalScore - a.signalScore || compareText(a.descriptiveTitle, b.descriptiveTitle);
+  }
+}
+
+function compareText(a, b) {
+  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function render() {
+  const filtered = getVisibleRecords();
+  const active = activeFilterCount();
+  const noun = state.view === "gallery" ? "images" : state.view === "video" ? "videos" : "files";
+
+  els.totalFiles.textContent = payload.total;
+  els.imageFiles.textContent = imageCount;
+  els.videoFiles.textContent = videoCount;
+  els.visibleFiles.textContent = filtered.length;
+  els.activeFilters.textContent = active;
+  els.resultStatus.textContent = resultStatusText(filtered.length);
+  els.filterReadout.textContent = active ? describeActiveFilters() : defaultReadout();
+  els.listViewButton.classList.toggle("is-active", state.view === "list");
+  els.galleryViewButton.classList.toggle("is-active", state.view === "gallery");
+  els.videoViewButton.classList.toggle("is-active", state.view === "video");
+  els.listViewButton.setAttribute("aria-pressed", String(state.view === "list"));
+  els.galleryViewButton.setAttribute("aria-pressed", String(state.view === "gallery"));
+  els.videoViewButton.setAttribute("aria-pressed", String(state.view === "video"));
+
+  els.emptyState.hidden = filtered.length > 0;
+  els.resultsList.hidden = state.view !== "list" || filtered.length === 0;
+  els.imageGallery.hidden = state.view !== "gallery" || filtered.length === 0;
+  els.videoGallery.hidden = state.view !== "video" || filtered.length === 0;
+  els.emptyState.querySelector("strong").textContent = `No matching ${noun}`;
+
+  if (state.view === "gallery") {
+    els.resultsList.replaceChildren();
+    els.videoGallery.replaceChildren();
+    els.imageGallery.replaceChildren(...filtered.map(renderGalleryItem));
+  } else if (state.view === "video") {
+    els.resultsList.replaceChildren();
+    els.imageGallery.replaceChildren();
+    els.videoGallery.replaceChildren(...filtered.map(renderVideoItem));
+  } else {
+    els.imageGallery.replaceChildren();
+    els.videoGallery.replaceChildren();
+    els.resultsList.replaceChildren(...filtered.map(renderRecord));
+  }
+}
+
+function resultStatusText(count) {
+  if (state.view === "gallery") return `${count} of ${imageCount} images visible`;
+  if (state.view === "video") return `${count} of ${videoCount} videos visible`;
+  return `${count} of ${payload.total} files visible`;
+}
+
+function defaultReadout() {
+  if (state.view === "gallery") {
+    return "Gallery mode shows image files only while preserving keyword and metadata filters.";
+  }
+  if (state.view === "video") {
+    return "Video gallery embeds DVIDS players for direct browsing and playback.";
+  }
+  return "Search generated names, original names, metadata, and preview text.";
+}
+
+function describeActiveFilters() {
+  const parts = [];
+  if (state.query) parts.push(`keyword: "${state.query}"`);
+  if (state.agencies.size) parts.push(`agency: ${[...state.agencies].join(", ")}`);
+  if (state.fileTypes.size) parts.push(`type: ${[...state.fileTypes].join(", ")}`);
+  if (state.releaseDate) parts.push(`release: ${state.releaseDate}`);
+  if (state.incidentDate) parts.push(`incident date: ${state.incidentDate}`);
+  if (state.location) parts.push(`location: ${state.location}`);
+  return parts.join(" · ");
+}
+
+function renderRecord(record) {
+  const card = document.createElement("article");
+  card.className = `release-card${record.signalScore >= 60 ? " high-signal" : ""}${
+    record.fileType === "IMG" ? " has-image" : ""
+  }`;
+
+  const tags = record.tags.length
+    ? `<div class="tag-list">${record.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div>`
+    : "";
+  const actionLabel = record.actionSource === "WAR media" ? "Download" : "Open file";
+  const actionTitle =
+    record.actionSource === "WAR media"
+      ? `Download ${record.descriptiveFilename}`
+      : `Open ${record.actionSource} page for ${record.descriptiveFilename}`;
+  const imagePreview =
+    record.fileType === "IMG"
+      ? `
+        <a class="inline-image-preview" href="${escapeAttr(record.actionUrl)}" target="_blank" rel="noreferrer" aria-label="Open image preview for ${escapeAttr(record.descriptiveTitle)}">
+          <img src="${escapeAttr(record.thumbnailUrl || record.fileUrl)}" alt="${escapeAttr(record.descriptiveTitle)}" loading="lazy" />
+          <span>Image preview</span>
+        </a>
+      `
+      : "";
+
+  card.innerHTML = `
+    <div class="record-main">
+      <div class="record-kicker">
+        <span>#${String(record.id).padStart(3, "0")}</span>
+        <span class="type-chip">${escapeHtml(record.fileType)}</span>
+        <span>${escapeHtml(record.agency)}</span>
+        <span class="score-chip">signal ${record.signalScore}</span>
+      </div>
+      <h2 class="record-title">${highlight(record.descriptiveTitle)}</h2>
+      <div class="filename-row">
+        <span>Generated filename: <code>${highlight(record.descriptiveFilename)}</code></span>
+        <span>Original filename: <code>${highlight(record.originalTitle)}</code></span>
+      </div>
+      <div class="meta-grid" aria-label="File metadata">
+        <div><span>Release date</span><strong>${escapeHtml(record.releaseDate || "Unknown")}</strong></div>
+        <div><span>Incident date</span><strong>${escapeHtml(record.incidentDate || "Unknown")}</strong></div>
+        <div><span>Location</span><strong>${escapeHtml(record.incidentLocation || "Unknown")}</strong></div>
+        <div><span>Action source</span><strong>${escapeHtml(record.actionSource)}</strong></div>
+      </div>
+      <p class="preview">${highlight(record.previewText || "No preview text provided in the source catalog.")}</p>
+      ${tags}
+    </div>
+    ${imagePreview}
+    <div class="record-actions">
+      <a class="download-button" href="${escapeAttr(record.actionUrl)}" target="_blank" rel="noreferrer" download="${escapeAttr(record.descriptiveFilename)}" title="${escapeAttr(actionTitle)}">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3" />
+        </svg>
+        ${actionLabel}
+      </a>
+      <div class="action-source">${escapeHtml(record.actionSource)}</div>
+    </div>
+  `;
+  attachImageFallback(card, record);
+  return card;
+}
+
+function renderGalleryItem(record) {
+  const item = document.createElement("article");
+  item.className = "gallery-item";
+  const actionLabel = record.actionSource === "WAR media" ? "Download" : "Open file";
+
+  item.innerHTML = `
+    <a class="gallery-image-link" href="${escapeAttr(record.actionUrl)}" target="_blank" rel="noreferrer" aria-label="Open ${escapeAttr(record.descriptiveTitle)}">
+      <img src="${escapeAttr(record.thumbnailUrl || record.fileUrl)}" alt="${escapeAttr(record.descriptiveTitle)}" loading="lazy" />
+    </a>
+    <div class="gallery-copy">
+      <div class="record-kicker">
+        <span>#${String(record.id).padStart(3, "0")}</span>
+        <span class="type-chip">${escapeHtml(record.fileType)}</span>
+        <span>${escapeHtml(record.agency)}</span>
+      </div>
+      <h2 class="gallery-title">${highlight(record.descriptiveTitle)}</h2>
+      <div class="filename-row">
+        <span>Generated filename: <code>${highlight(record.descriptiveFilename)}</code></span>
+        <span>Original filename: <code>${highlight(record.originalTitle)}</code></span>
+      </div>
+      <div class="gallery-meta">
+        <span>${escapeHtml(record.incidentLocation || "Unknown location")}</span>
+        <span>${escapeHtml(record.incidentDate || "Unknown date")}</span>
+      </div>
+      <p class="preview">${highlight(record.previewText || "No preview text provided in the source catalog.")}</p>
+      <a class="download-button" href="${escapeAttr(record.actionUrl)}" target="_blank" rel="noreferrer" download="${escapeAttr(record.descriptiveFilename)}">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3" />
+        </svg>
+        ${actionLabel}
+      </a>
+    </div>
+  `;
+  attachImageFallback(item, record);
+  return item;
+}
+
+function renderVideoItem(record) {
+  const item = document.createElement("article");
+  item.className = "video-item";
+  const dvidsUrl = record.dvidsVideoId ? `https://www.dvidshub.net/video/${record.dvidsVideoId}` : record.actionUrl;
+  const embedUrl = record.dvidsVideoId ? `https://www.dvidshub.net/video/embed/${record.dvidsVideoId}` : "";
+  const reportLink =
+    record.fileUrl && record.fileUrl !== dvidsUrl
+      ? `
+        <a class="secondary-link" href="${escapeAttr(record.fileUrl)}" target="_blank" rel="noreferrer">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M7 3h7l4 4v14H7zM14 3v5h5M10 13h6M10 17h6" />
+          </svg>
+          Open report
+        </a>
+      `
+      : "";
+  const player = embedUrl
+    ? `
+      <iframe
+        title="${escapeAttr(record.descriptiveTitle)}"
+        src="${escapeAttr(embedUrl)}"
+        loading="lazy"
+        allow="autoplay; fullscreen; picture-in-picture"
+        allowfullscreen
+        referrerpolicy="strict-origin-when-cross-origin"
+      ></iframe>
+    `
+    : `
+      <div class="video-unavailable">
+        <strong>Player unavailable</strong>
+        <span>Open the external source to view this video.</span>
+      </div>
+    `;
+
+  item.innerHTML = `
+    <div class="video-frame">
+      ${player}
+    </div>
+    <div class="video-copy">
+      <div class="record-kicker">
+        <span>#${String(record.id).padStart(3, "0")}</span>
+        <span class="type-chip">${escapeHtml(record.fileType)}</span>
+        <span>${escapeHtml(record.agency)}</span>
+        ${record.dvidsVideoId ? `<span>DVIDS ${escapeHtml(record.dvidsVideoId)}</span>` : ""}
+      </div>
+      <h2 class="gallery-title">${highlight(record.descriptiveTitle)}</h2>
+      <div class="filename-row">
+        <span>Generated filename: <code>${highlight(record.descriptiveFilename)}</code></span>
+        <span>Original filename: <code>${highlight(record.originalTitle)}</code></span>
+      </div>
+      <div class="gallery-meta">
+        <span>${escapeHtml(record.incidentLocation || "Unknown location")}</span>
+        <span>${escapeHtml(record.incidentDate || "Unknown date")}</span>
+        <span>${escapeHtml(record.actionSource)}</span>
+      </div>
+      <p class="preview">${highlight(record.previewText || "No preview text provided in the source catalog.")}</p>
+      <div class="video-actions">
+        <a class="download-button" href="${escapeAttr(dvidsUrl)}" target="_blank" rel="noreferrer">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 5h14v14H5zM10 9l5 3-5 3z" />
+          </svg>
+          Open DVIDS
+        </a>
+        ${reportLink}
+      </div>
+    </div>
+  `;
+  return item;
+}
+
+function attachImageFallback(root, record) {
+  const img = root.querySelector("img");
+  if (!img) return;
+  let triedFullSource = false;
+
+  img.addEventListener("error", () => {
+    if (!triedFullSource && record.fileUrl && img.src !== record.fileUrl) {
+      triedFullSource = true;
+      img.src = record.fileUrl;
+      return;
+    }
+
+    const shell = img.closest(".inline-image-preview, .gallery-image-link");
+    if (!shell) return;
+    shell.classList.add("image-load-failed");
+    shell.dataset.fallbackTitle = "Remote preview unavailable";
+    shell.dataset.fallbackDetail = record.actionSource || "Open the source file";
+    img.alt = "";
+  });
+}
+
+function clearFilters() {
+  state.query = "";
+  state.releaseDate = "";
+  state.incidentDate = "";
+  state.location = "";
+  state.agencies.clear();
+  state.fileTypes.clear();
+
+  els.searchInput.value = "";
+  els.releaseDateFilter.value = "";
+  els.incidentDateFilter.value = "";
+  els.locationFilter.value = "";
+  document.querySelectorAll(".filter-check input").forEach((input) => {
+    input.checked = false;
+  });
+  render();
+}
+
+function bindEvents() {
+  els.searchInput.addEventListener("input", () => {
+    state.query = els.searchInput.value.trim();
+    render();
+  });
+  els.releaseDateFilter.addEventListener("change", () => {
+    state.releaseDate = els.releaseDateFilter.value;
+    render();
+  });
+  els.incidentDateFilter.addEventListener("change", () => {
+    state.incidentDate = els.incidentDateFilter.value;
+    render();
+  });
+  els.locationFilter.addEventListener("change", () => {
+    state.location = els.locationFilter.value;
+    render();
+  });
+  els.sortSelect.addEventListener("change", () => {
+    state.sort = els.sortSelect.value;
+    render();
+  });
+  els.listViewButton.addEventListener("click", () => {
+    state.view = "list";
+    render();
+  });
+  els.galleryViewButton.addEventListener("click", () => {
+    state.view = "gallery";
+    clearFileTypeFilters();
+    render();
+  });
+  els.videoViewButton.addEventListener("click", () => {
+    state.view = "video";
+    clearFileTypeFilters();
+    render();
+  });
+  els.clearFilters.addEventListener("click", clearFilters);
+}
+
+function clearFileTypeFilters() {
+  state.fileTypes.clear();
+  document.querySelectorAll("#typeFilters input").forEach((input) => {
+    input.checked = false;
+  });
+}
+
+buildCheckboxes(els.agencyFilters, "agency", state.agencies);
+buildCheckboxes(els.typeFilters, "fileType", state.fileTypes);
+buildSelect(els.releaseDateFilter, "releaseDate", "All release dates");
+buildSelect(els.incidentDateFilter, "incidentDate", "All incident dates");
+buildSelect(els.locationFilter, "incidentLocation", "All locations");
+bindEvents();
+render();

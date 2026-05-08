@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Release 01 Terminal</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="terminal-shell">
+      <header class="command-deck">
+        <div class="identity">
+          <span class="mark" aria-hidden="true"></span>
+          <div>
+            <h1>Release 01 Terminal</h1>
+            <p>WAR UFO/UAP release browser with searchable previews and generated descriptive filenames.</p>
+          </div>
+        </div>
+        <div class="signal-board" aria-label="Release summary">
+          <div>
+            <strong id="totalFiles">162</strong>
+            <span>files</span>
+          </div>
+          <div>
+            <strong id="imageFiles">14</strong>
+            <span>images</span>
+          </div>
+          <div>
+            <strong id="videoFiles">28</strong>
+            <span>videos</span>
+          </div>
+          <div>
+            <strong id="visibleFiles">162</strong>
+            <span>visible</span>
+          </div>
+          <div>
+            <strong id="activeFilters">0</strong>
+            <span>filters</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="app-grid">
+        <aside class="filter-rail" aria-label="Filters">
+          <section class="control-block search-block">
+            <label for="searchInput">Keyword sweep</label>
+            <div class="search-wrap">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m21 21-4.2-4.2m1.2-5.3a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z" />
+              </svg>
+              <input id="searchInput" type="search" autocomplete="off" placeholder="alien corpses, orb, Greece, 62-HQ..." />
+            </div>
+          </section>
+
+          <section class="control-block">
+            <div class="control-title">Agency</div>
+            <div id="agencyFilters" class="check-grid"></div>
+          </section>
+
+          <section class="control-block">
+            <div class="control-title">Filetype</div>
+            <div id="typeFilters" class="check-grid compact"></div>
+          </section>
+
+          <section class="control-block">
+            <label for="releaseDateFilter">Release date</label>
+            <select id="releaseDateFilter"></select>
+          </section>
+
+          <section class="control-block">
+            <label for="incidentDateFilter">Incident date</label>
+            <select id="incidentDateFilter"></select>
+          </section>
+
+          <section class="control-block">
+            <label for="locationFilter">Incident location</label>
+            <select id="locationFilter"></select>
+          </section>
+
+          <section class="control-block">
+            <label for="sortSelect">Sort vector</label>
+            <select id="sortSelect">
+              <option value="signal">Signal score</option>
+              <option value="agency">Agency</option>
+              <option value="location">Incident location</option>
+              <option value="incidentDate">Incident date</option>
+              <option value="title">Generated filename</option>
+              <option value="type">Filetype</option>
+            </select>
+          </section>
+
+          <button id="clearFilters" class="ghost-button" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h16M9 7V5h6v2m-8 4 1 8h8l1-8" />
+            </svg>
+            Clear filters
+          </button>
+        </aside>
+
+        <section class="results-panel" aria-label="Release files">
+          <div class="results-toolbar">
+            <div>
+              <p id="resultStatus">162 files indexed</p>
+              <span id="filterReadout">Search generated names, original names, metadata, and preview text.</span>
+            </div>
+            <div class="toolbar-actions">
+              <div class="view-toggle" aria-label="View mode">
+                <button id="listViewButton" class="view-button is-active" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 6h14M5 12h14M5 18h14" />
+                  </svg>
+                  File index
+                </button>
+                <button id="galleryViewButton" class="view-button" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 5h7v7H4zM13 5h7v7h-7zM4 14h7v5H4zM13 14h7v5h-7z" />
+                  </svg>
+                  Image gallery
+                </button>
+                <button id="videoViewButton" class="view-button" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 5h14v14H5zM10 9l5 3-5 3z" />
+                  </svg>
+                  Video gallery
+                </button>
+              </div>
+              <a class="source-link" href="https://www.war.gov/UFO/#release" target="_blank" rel="noreferrer">Source release</a>
+            </div>
+          </div>
+
+          <div id="emptyState" class="empty-state" hidden>
+            <strong>No matching files</strong>
+            <span>Adjust the keyword sweep or clear one of the active filters.</span>
+          </div>
+
+          <div id="resultsList" class="results-list"></div>
+          <div id="imageGallery" class="image-gallery" hidden></div>
+          <div id="videoGallery" class="video-gallery" hidden></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="data/releases.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
