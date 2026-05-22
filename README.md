@@ -1,12 +1,15 @@
-# UFO Release 01 Terminal
+# PURSUE Release Terminal
 
-UFO Release 01 Terminal is a static web app for browsing the May 8, 2026 WAR UFO/UAP Release 01 catalog. It turns the release inventory into a searchable, filterable file terminal with generated descriptive filenames, preview text, source metadata, image previews, and embedded DVIDS video players.
+PURSUE Release Terminal is a static web app for browsing the WAR UFO/UAP release catalog. It turns the release inventory into a searchable, filterable file terminal with generated descriptive filenames, preview text, source metadata, image previews, and embedded DVIDS video players.
 
-The app is intentionally static. It has no build step, backend, package manager, database, or tracking code. Open `index.html` directly or serve the folder from any static host.
+The app is intentionally static. It has no backend, package manager, database, or tracking code. Open `index.html` directly or serve the folder from any static host.
+
+At runtime, the app starts from the bundled `data/releases.js` snapshot, then tries to refresh from the live WAR.gov PURSUE CSV at `https://www.war.gov/Portals/1/Interactive/2026/UFO/uap-data.csv`. If WAR.gov keeps that CSV CORS-accessible, future releases will appear on the static site without a redeploy. If the live refresh fails, the bundled snapshot remains usable.
 
 ## What the App Does
 
-- Indexes 162 Release 01 records from the WAR UFO/UAP release page.
+- Indexes 222 PURSUE records from Release 01 and Release 02 in the bundled snapshot.
+- Attempts a live static refresh from the WAR.gov CSV so later releases can appear automatically.
 - Searches generated filenames, original filenames, agencies, dates, locations, tags, and preview text.
 - Filters by agency, file type, release date, incident date, and incident location.
 - Sorts by signal score, agency, location, incident date, generated filename, or file type.
@@ -70,6 +73,8 @@ A local server is recommended when testing embedded video behavior or browser se
 ├── styles.css
 ├── data/
 │   └── releases.js
+├── scripts/
+│   └── build-release-data.mjs
 └── screenshots/
     ├── 01-release-index.png
     ├── 02-keyword-search.png
@@ -81,10 +86,23 @@ A local server is recommended when testing embedded video behavior or browser se
 
 ## Data Notes
 
-The bundled data file is `data/releases.js`. It was generated from a local CSV capture of the WAR Release 01 page and contains normalized metadata plus generated descriptive titles and filenames for browsing. This repository includes only the static app release, not the larger review workspace, source PDFs, videos, analysis exports, or data-processing scripts.
+The bundled data file is `data/releases.js`. It is generated from the WAR.gov PURSUE CSV and contains normalized metadata plus generated descriptive titles and filenames for browsing. This repository includes only the static app release, not the source PDFs, videos, or analysis exports.
+
+Refresh the bundled snapshot with:
+
+```bash
+node scripts/build-release-data.mjs
+```
+
+The script fetches the live WAR.gov CSV and rewrites `data/releases.js`. For a repeatable local rebuild from a saved CSV, pass a source path:
+
+```bash
+node scripts/build-release-data.mjs --source=path/to/uap-data.csv
+```
 
 The app is a release browser and triage aid. It does not validate claims in the underlying government records or external source pages.
 
 ## Source
 
 - WAR UFO/UAP release page: <https://www.war.gov/UFO/#release>
+- WAR PURSUE CSV: <https://www.war.gov/Portals/1/Interactive/2026/UFO/uap-data.csv>

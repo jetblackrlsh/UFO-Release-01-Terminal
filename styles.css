@@ -422,6 +422,10 @@ select:focus {
   font-size: 0.73rem;
 }
 
+.results-toolbar .data-status {
+  color: var(--dim);
+}
+
 .source-link {
   flex: 0 0 auto;
   color: var(--cyan);

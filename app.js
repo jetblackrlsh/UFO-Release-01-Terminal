@@ -1,21 +1,9 @@
-const payload = window.UFO_RELEASE_DATA;
-const records = payload.records.map((record) => ({
-  ...record,
-  searchable: normalize(
-    [
-      record.descriptiveTitle,
-      record.descriptiveFilename,
-      record.originalTitle,
-      record.previewText,
-      record.agency,
-      record.releaseDate,
-      record.incidentDate,
-      record.incidentLocation,
-      record.fileType,
-      record.tags.join(" "),
-    ].join(" ")
-  ),
-}));
+const LIVE_CSV_URL = "https://www.war.gov/Portals/1/Interactive/2026/UFO/uap-data.csv";
+
+let payload = window.UFO_RELEASE_DATA;
+let records = [];
+let imageCount = 0;
+let videoCount = 0;
 
 const state = {
   query: "",
@@ -47,14 +35,12 @@ const els = {
   videoViewButton: document.querySelector("#videoViewButton"),
   resultStatus: document.querySelector("#resultStatus"),
   filterReadout: document.querySelector("#filterReadout"),
+  dataStatus: document.querySelector("#dataStatus"),
   resultsList: document.querySelector("#resultsList"),
   imageGallery: document.querySelector("#imageGallery"),
   videoGallery: document.querySelector("#videoGallery"),
   emptyState: document.querySelector("#emptyState"),
 };
-
-const imageCount = records.filter((record) => record.fileType === "IMG").length;
-const videoCount = records.filter((record) => record.fileType === "VID").length;
 
 function normalize(value) {
   return String(value || "")
@@ -63,6 +49,296 @@ function normalize(value) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function parseCSV(csvText) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let insideQuotes = false;
+
+  for (let i = 0; i < csvText.length; i += 1) {
+    const char = csvText[i];
+    const nextChar = csvText[i + 1];
+
+    if (char === '"' && insideQuotes && nextChar === '"') {
+      cell += '"';
+      i += 1;
+    } else if (char === '"') {
+      insideQuotes = !insideQuotes;
+    } else if (char === "," && !insideQuotes) {
+      row.push(cell.trim());
+      cell = "";
+    } else if ((char === "\n" || char === "\r") && !insideQuotes) {
+      if (cell || row.length) {
+        row.push(cell.trim());
+        rows.push(row);
+        row = [];
+        cell = "";
+      }
+      if (char === "\r" && nextChar === "\n") i += 1;
+    } else {
+      cell += char;
+    }
+  }
+
+  if (cell || row.length) {
+    row.push(cell.trim());
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function rowsToObjects(csvText) {
+  const rows = parseCSV(csvText).filter((row) => row.some(Boolean));
+  const headers = rows.shift() || [];
+  return rows.map((row) =>
+    headers.reduce((record, header, index) => {
+      if (header) record[header] = row[index] || "";
+      return record;
+    }, {})
+  );
+}
+
+function buildPayloadFromCsv(csvText, sourceUrl = LIVE_CSV_URL) {
+  const sourceRows = rowsToObjects(csvText).filter((row) => row.Title || row["PDF | Image Link"] || row["DVIDS Video ID"]);
+  const recordsFromCsv = sourceRows.map((row, index) => normalizeSourceRecord(row, index + 1));
+
+  return {
+    generatedFrom: sourceUrl,
+    generatedAt: new Date().toISOString(),
+    sourceUrl,
+    total: recordsFromCsv.length,
+    records: recordsFromCsv,
+  };
+}
+
+function normalizeSourceRecord(row, id) {
+  const originalTitle = cleanValue(row.Title, `PURSUE record ${id}`);
+  const fileType = normalizeFileType(row.Type, row["PDF | Image Link"]);
+  const dvidsVideoId = cleanValue(row["DVIDS Video ID"]);
+  const fileUrl = cleanValue(row["PDF | Image Link"]);
+  const actionUrl = getActionUrl(fileType, dvidsVideoId, fileUrl);
+  const actionSource = getActionSource(fileType, dvidsVideoId, actionUrl);
+  const descriptiveTitle = createDescriptiveTitle(originalTitle, row["Video Title"]);
+
+  return {
+    id,
+    releaseDate: cleanValue(row["Release Date"], "N/A"),
+    originalTitle,
+    fileType,
+    videoPairing: cleanValue(row["Video Pairing"]),
+    pdfPairing: cleanValue(row["PDF Pairing"]),
+    previewText: cleanValue(row["Description Blurb"]),
+    dvidsVideoId,
+    videoTitle: cleanValue(row["Video Title"]),
+    agency: cleanValue(row.Agency, "Unknown agency"),
+    incidentDate: cleanValue(row["Incident Date"], "N/A"),
+    incidentLocation: cleanValue(row["Incident Location"], "N/A"),
+    fileUrl,
+    actionUrl,
+    actionSource,
+    thumbnailUrl: cleanValue(row["Modal Image"]),
+    imageAltText: cleanValue(row["Image Alt Text"]),
+    imageVirin: cleanValue(row["Image VIRIN"]),
+    descriptiveTitle,
+    descriptiveFilename: createDescriptiveFilename(descriptiveTitle, originalTitle, fileType, actionUrl),
+    tags: createTags(row, fileType),
+    signalScore: createSignalScore(row, fileType, dvidsVideoId),
+  };
+}
+
+function cleanValue(value, fallback = "") {
+  const clean = String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return clean || fallback;
+}
+
+function normalizeFileType(type, url) {
+  const explicitType = cleanValue(type).replace(/^\./, "").toUpperCase();
+  if (explicitType) return explicitType;
+
+  const extension = getUrlExtension(url).replace(/^\./, "").toUpperCase();
+  if (["JPG", "JPEG", "PNG", "GIF", "WEBP"].includes(extension)) return "IMG";
+  if (["MP4", "MOV", "WEBM", "OGG"].includes(extension)) return "VID";
+  if (["MP3", "WAV", "M4A"].includes(extension)) return "AUD";
+  return extension || "PDF";
+}
+
+function getUrlExtension(url) {
+  const match = String(url || "")
+    .split("?")[0]
+    .match(/\.[a-z0-9]+$/i);
+  return match ? match[0].toLowerCase() : "";
+}
+
+function getActionUrl(fileType, dvidsVideoId, fileUrl) {
+  if (dvidsVideoId && fileType === "VID") return `https://www.dvidshub.net/video/${dvidsVideoId}`;
+  return fileUrl || (dvidsVideoId ? `https://www.dvidshub.net/video/${dvidsVideoId}` : "");
+}
+
+function getActionSource(fileType, dvidsVideoId, actionUrl) {
+  if (dvidsVideoId && fileType === "VID") return "DVIDS";
+  if (!actionUrl) return "Source unavailable";
+  if (actionUrl.includes("war.gov")) return "WAR media";
+  try {
+    return new URL(actionUrl).hostname.replace(/^www\./, "");
+  } catch {
+    return "External source";
+  }
+}
+
+function createDescriptiveTitle(originalTitle, videoTitle) {
+  const sourceTitle = cleanValue(videoTitle) || originalTitle;
+  const withoutExtension = sourceTitle.replace(/\.[a-z0-9]+$/i, "");
+  const withoutRecordCode = withoutExtension.replace(/^[A-Z0-9-]+,\s*/i, "");
+  return withoutRecordCode
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^"(.+)"$/, "$1")
+    .trim();
+}
+
+function createDescriptiveFilename(descriptiveTitle, originalTitle, fileType, actionUrl) {
+  const extension = getDownloadExtension(fileType, actionUrl);
+  const slugSource = descriptiveTitle || originalTitle || "pursue-record";
+  const slug = slugSource
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120);
+  return `${slug || "pursue-record"}${extension}`;
+}
+
+function getDownloadExtension(fileType, actionUrl) {
+  const urlExtension = getUrlExtension(actionUrl);
+  if (urlExtension) return urlExtension;
+  if (fileType === "VID") return ".mp4";
+  if (fileType === "AUD") return ".mp3";
+  if (fileType === "IMG") return ".jpg";
+  return ".pdf";
+}
+
+function createTags(row, fileType) {
+  const text = normalize(
+    [
+      row.Title,
+      row["Description Blurb"],
+      row.Agency,
+      row["Incident Location"],
+      row["Image Alt Text"],
+      fileType,
+    ].join(" ")
+  );
+  const tagRules = [
+    ["uap", /\buap\b/],
+    ["ufo", /\bufo\b|\bufos\b/],
+    ["orb", /\borb\b|\borbs\b/],
+    ["disc", /\bdisc\b|\bdiscs\b|\bflying disc/],
+    ["fireball", /\bfireball/],
+    ["infrared", /\binfrared\b|\bir\b/],
+    ["radar", /\bradar\b/],
+    ["sensor", /\bsensor\b/],
+    ["pilot", /\bpilot\b|\baircraft\b/],
+    ["satellite", /\bsatellite\b|\bapollo\b|\bnasa\b/],
+    ["report", /\breport\b|\bnarrative\b|\bcable\b/],
+    ["photo", /\bphoto\b|\bimage\b|\bimagery\b/],
+    ["video", /\bvideo\b|\bfootage\b/],
+    ["audio", /\baudio\b|\btape\b/],
+  ];
+  return tagRules.filter(([, pattern]) => pattern.test(text)).map(([tag]) => tag).slice(0, 8);
+}
+
+function createSignalScore(row, fileType, dvidsVideoId) {
+  const text = normalize([row.Title, row["Description Blurb"], row["Incident Location"], row["Image Alt Text"]].join(" "));
+  let score = 12;
+  if (fileType === "VID") score += 28;
+  if (fileType === "IMG") score += 22;
+  if (fileType === "AUD") score += 18;
+  if (dvidsVideoId) score += 8;
+  if (/\borb\b|\borbs\b/.test(text)) score += 12;
+  if (/\binfrared\b|\bsensor\b|\bradar\b/.test(text)) score += 10;
+  if (/\balien\b|\bextraterrestrial\b/.test(text)) score += 8;
+  if (/\bphoto\b|\bimage\b|\bimagery\b/.test(text)) score += 7;
+  if (/\bpilot\b|\baircraft\b|\bhelicopter\b/.test(text)) score += 6;
+  if (/\bredaction\b|\bredacted\b/.test(text)) score += 4;
+  return Math.min(score, 99);
+}
+
+function hydrateData(nextPayload, statusText) {
+  payload = nextPayload;
+  records = payload.records.map((record) => ({
+    ...record,
+    tags: record.tags || [],
+    searchable: normalize(
+      [
+        record.descriptiveTitle,
+        record.descriptiveFilename,
+        record.originalTitle,
+        record.previewText,
+        record.agency,
+        record.releaseDate,
+        record.incidentDate,
+        record.incidentLocation,
+        record.fileType,
+        (record.tags || []).join(" "),
+      ].join(" ")
+    ),
+  }));
+  imageCount = records.filter((record) => record.fileType === "IMG").length;
+  videoCount = records.filter((record) => record.fileType === "VID").length;
+  pruneSelectedValues();
+  buildControls();
+  if (statusText && els.dataStatus) els.dataStatus.textContent = statusText;
+}
+
+function pruneSelectedValues() {
+  const agencies = new Set(records.map((record) => displayValue(record.agency)));
+  const fileTypes = new Set(records.map((record) => displayValue(record.fileType)));
+  state.agencies = new Set([...state.agencies].filter((value) => agencies.has(value)));
+  state.fileTypes = new Set([...state.fileTypes].filter((value) => fileTypes.has(value)));
+
+  if (state.releaseDate && !records.some((record) => record.releaseDate === state.releaseDate)) state.releaseDate = "";
+  if (state.incidentDate && !records.some((record) => record.incidentDate === state.incidentDate)) state.incidentDate = "";
+  if (state.location && !records.some((record) => record.incidentLocation === state.location)) state.location = "";
+}
+
+function buildControls() {
+  buildCheckboxes(els.agencyFilters, "agency", state.agencies);
+  buildCheckboxes(els.typeFilters, "fileType", state.fileTypes);
+  buildSelect(els.releaseDateFilter, "releaseDate", "All release dates");
+  buildSelect(els.incidentDateFilter, "incidentDate", "All incident dates");
+  buildSelect(els.locationFilter, "incidentLocation", "All locations");
+  els.releaseDateFilter.value = state.releaseDate;
+  els.incidentDateFilter.value = state.incidentDate;
+  els.locationFilter.value = state.location;
+}
+
+async function refreshFromLiveCsv() {
+  if (els.dataStatus) els.dataStatus.textContent = "Checking WAR.gov for the latest release data...";
+
+  try {
+    const response = await fetch(LIVE_CSV_URL, { cache: "no-store" });
+    if (!response.ok) throw new Error(`WAR.gov CSV returned ${response.status}`);
+
+    const csvText = await response.text();
+    const livePayload = buildPayloadFromCsv(csvText);
+    if (livePayload.total < payload.total) {
+      throw new Error(`live CSV had fewer records than the bundled snapshot (${livePayload.total} < ${payload.total})`);
+    }
+
+    hydrateData(livePayload, `Live WAR.gov CSV loaded: ${livePayload.total} records.`);
+    render();
+  } catch (error) {
+    if (els.dataStatus) {
+      els.dataStatus.textContent = `Bundled snapshot in use; live refresh unavailable (${error.message}).`;
+    }
+  }
 }
 
 function displayValue(value) {
@@ -94,7 +370,7 @@ function buildCheckboxes(container, field, selectedSet) {
     label.className = "filter-check";
     label.htmlFor = id;
     label.innerHTML = `
-      <input id="${id}" type="checkbox" value="${escapeAttr(value)}" />
+      <input id="${id}" type="checkbox" value="${escapeAttr(value)}" ${selectedSet.has(value) ? "checked" : ""} />
       <span>${escapeHtml(value)}</span>
       <span class="count">${count}</span>
     `;
@@ -525,10 +801,11 @@ function clearFileTypeFilters() {
   });
 }
 
-buildCheckboxes(els.agencyFilters, "agency", state.agencies);
-buildCheckboxes(els.typeFilters, "fileType", state.fileTypes);
-buildSelect(els.releaseDateFilter, "releaseDate", "All release dates");
-buildSelect(els.incidentDateFilter, "incidentDate", "All incident dates");
-buildSelect(els.locationFilter, "incidentLocation", "All locations");
-bindEvents();
-render();
+function init() {
+  hydrateData(payload, `Bundled snapshot loaded: ${payload.total} records.`);
+  bindEvents();
+  render();
+  refreshFromLiveCsv();
+}
+
+init();
